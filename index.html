@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Black-Scholes Options Pricer with Greeks</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen p-6">
+<div class="max-w-5xl mx-auto">
+  <h1 class="text-2xl font-bold text-emerald-400 mb-2">Black-Scholes Options Pricer with Greeks</h1>
+  <p class="text-gray-400 mb-6 text-sm">European vanilla options — uses full Black-Scholes formula with analytic Greeks</p>
+
+  <!-- Inputs -->
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+    <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+      <label class="block text-xs text-gray-400 mb-1">S — Spot Price ($)</label>
+      <input id="S" type="number" step="1" value="100" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-emerald-500">
+    </div>
+    <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+      <label class="block text-xs text-gray-400 mb-1">K — Strike ($)</label>
+      <input id="K" type="number" step="1" value="100" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-emerald-500">
+    </div>
+    <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+      <label class="block text-xs text-gray-400 mb-1">T — Time (years)</label>
+      <input id="T" type="number" step="0.01" value="0.5" min="0.001" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-emerald-500">
+    </div>
+    <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+      <label class="block text-xs text-gray-400 mb-1">r — Risk-free Rate</label>
+      <input id="r" type="number" step="0.001" value="0.05" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-emerald-500">
+    </div>
+    <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+      <label class="block text-xs text-gray-400 mb-1">σ — Volatility</label>
+      <input id="sigma" type="number" step="0.01" value="0.2" min="0.001" class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-emerald-500">
+    </div>
+  </div>
+
+  <!-- Price cards -->
+  <div class="grid grid-cols-2 gap-4 mb-6">
+    <div class="bg-gray-900 rounded-xl p-5 border border-emerald-700 text-center">
+      <div class="text-xs text-gray-400 mb-1">Call Price</div>
+      <div id="callPrice" class="text-4xl font-bold text-emerald-400">—</div>
+      <div id="callITM" class="text-xs mt-1 text-gray-500"></div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-5 border border-rose-700 text-center">
+      <div class="text-xs text-gray-400 mb-1">Put Price</div>
+      <div id="putPrice" class="text-4xl font-bold text-rose-400">—</div>
+      <div id="putITM" class="text-xs mt-1 text-gray-500"></div>
+    </div>
+  </div>
+
+  <!-- Greeks table -->
+  <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 mb-6 overflow-x-auto">
+    <h2 class="text-base font-semibold text-gray-200 mb-3">Greeks</h2>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-gray-400 border-b border-gray-700">
+          <th class="text-left py-2 pr-4">Greek</th>
+          <th class="text-left py-2 pr-4">Meaning</th>
+          <th class="text-right py-2 pr-4">Call</th>
+          <th class="text-right py-2">Put</th>
+        </tr>
+      </thead>
+      <tbody id="greeksTable"></tbody>
+    </table>
+  </div>
+
+  <!-- Chart: S vs Price -->
+  <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-base font-semibold text-gray-200">Spot Price vs Option Price</h2>
+      <div class="flex gap-3 text-xs">
+        <span class="flex items-center gap-1"><span class="inline-block w-4 h-0.5 bg-emerald-400"></span> Call</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-4 h-0.5 bg-rose-400"></span> Put</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-4 h-0.5 bg-gray-500" style="border-top:2px dashed #6b7280;border-style:dashed"></span> Intrinsic</span>
+      </div>
+    </div>
+    <canvas id="chart" class="w-full rounded-lg" height="280"></canvas>
+    <div class="flex justify-between text-xs text-gray-500 mt-1">
+      <span id="chartXmin"></span><span>Spot Price (S)</span><span id="chartXmax"></span>
+    </div>
+  </div>
+
+  <!-- Parity check -->
+  <div id="parityDiv" class="text-xs text-gray-500 text-center"></div>
+</div>
+
+<script>
+// Standard normal PDF
+function phi(x) { return Math.exp(-0.5*x*x) / Math.sqrt(2*Math.PI); }
+
+// Standard normal CDF (Abramowitz & Stegun rational approximation)
+function Phi(x) {
+  const a1=0.254829592, a2=-0.284496736, a3=1.421413741, a4=-1.453152027, a5=1.061405429, p=0.3275911;
+  const sign = x < 0 ? -1 : 1;
+  const t = 1/(1 + p*Math.abs(x));
+  const y = 1 - (((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x/2);
+  return 0.5*(1 + sign*y);
+}
+
+function bs(S, K, T, r, sigma) {
+  if (T <= 0 || sigma <= 0 || S <= 0 || K <= 0) return null;
+  const d1 = (Math.log(S/K) + (r + 0.5*sigma*sigma)*T) / (sigma*Math.sqrt(T));
+  const d2 = d1 - sigma*Math.sqrt(T);
+  const sqrtT = Math.sqrt(T);
+  const expRT = Math.exp(-r*T);
+
+  const callPrice = S*Phi(d1) - K*expRT*Phi(d2);
+  const putPrice  = K*expRT*Phi(-d2) - S*Phi(-d1);
+
+  // Greeks
+  const phiD1 = phi(d1);
+  const deltaCall = Phi(d1);
+  const deltaPut  = deltaCall - 1;
+  const gamma = phiD1 / (S*sigma*sqrtT);
+  const vega  = S*phiD1*sqrtT * 0.01; // per 1% vol change
+  const thetaCall = (-S*phiD1*sigma/(2*sqrtT) - r*K*expRT*Phi(d2)) / 365;
+  const thetaPut  = (-S*phiD1*sigma/(2*sqrtT) + r*K*expRT*Phi(-d2)) / 365;
+  const rhoCall = K*T*expRT*Phi(d2) * 0.01;
+  const rhoPut  = -K*T*expRT*Phi(-d2) * 0.01;
+
+  return { callPrice, putPrice, d1, d2, deltaCall, deltaPut, gamma, vega, thetaCall, thetaPut, rhoCall, rhoPut };
+}
+
+const GREEKS_META = [
+  { name: 'Delta (Δ)', meaning: 'dPrice/dS — sensitivity to spot', cKey: 'deltaCall', pKey: 'deltaPut', fmt: v => v.toFixed(4) },
+  { name: 'Gamma (Γ)', meaning: 'dΔ/dS — curvature', cKey: 'gamma', pKey: 'gamma', fmt: v => v.toFixed(6) },
+  { name: 'Vega (ν)', meaning: 'dPrice/dσ per +1% vol', cKey: 'vega', pKey: 'vega', fmt: v => '$'+v.toFixed(4) },
+  { name: 'Theta (Θ)', meaning: 'dPrice/dt per calendar day', cKey: 'thetaCall', pKey: 'thetaPut', fmt: v => '$'+v.toFixed(4) },
+  { name: 'Rho (ρ)', meaning: 'dPrice/dr per +1% rate', cKey: 'rhoCall', pKey: 'rhoPut', fmt: v => '$'+v.toFixed(4) },
+];
+
+function update() {
+  const S = parseFloat(document.getElementById('S').value)||100;
+  const K = parseFloat(document.getElementById('K').value)||100;
+  const T = Math.max(0.001, parseFloat(document.getElementById('T').value)||0.5);
+  const r = parseFloat(document.getElementById('r').value)||0.05;
+  const sigma = Math.max(0.001, parseFloat(document.getElementById('sigma').value)||0.2);
+
+  const res = bs(S, K, T, r, sigma);
+  if (!res) return;
+
+  document.getElementById('callPrice').textContent = '$' + res.callPrice.toFixed(4);
+  document.getElementById('putPrice').textContent  = '$' + res.putPrice.toFixed(4);
+  document.getElementById('callITM').textContent = S > K ? 'In-the-Money' : S < K ? 'Out-of-the-Money' : 'At-the-Money';
+  document.getElementById('putITM').textContent  = S < K ? 'In-the-Money' : S > K ? 'Out-of-the-Money' : 'At-the-Money';
+
+  // Greeks table
+  const tbody = document.getElementById('greeksTable');
+  tbody.innerHTML = '';
+  GREEKS_META.forEach(g => {
+    const cv = res[g.cKey];
+    const pv = res[g.pKey] !== undefined ? res[g.pKey] : cv;
+    tbody.innerHTML += `<tr class="border-b border-gray-800 hover:bg-gray-800 transition-colors">
+      <td class="py-2 pr-4 font-medium text-yellow-300">${g.name}</td>
+      <td class="py-2 pr-4 text-gray-400 text-xs">${g.meaning}</td>
+      <td class="py-2 pr-4 text-right text-emerald-300 font-mono">${g.fmt(cv)}</td>
+      <td class="py-2 text-right text-rose-300 font-mono">${g.fmt(g.cKey===g.pKey ? cv : pv)}</td>
+    </tr>`;
+  });
+
+  // d1, d2
+  tbody.innerHTML += `<tr class="border-b border-gray-700">
+    <td class="py-2 pr-4 text-gray-400 text-xs">d₁</td><td class="py-2 pr-4 text-gray-500 text-xs">intermediate</td>
+    <td colspan="2" class="py-2 text-right text-gray-400 font-mono text-xs">${res.d1.toFixed(6)}</td></tr>`;
+  tbody.innerHTML += `<tr>
+    <td class="py-2 pr-4 text-gray-400 text-xs">d₂</td><td class="py-2 pr-4 text-gray-500 text-xs">intermediate</td>
+    <td colspan="2" class="py-2 text-right text-gray-400 font-mono text-xs">${res.d2.toFixed(6)}</td></tr>`;
+
+  // Put-call parity check
+  const parity = res.callPrice - res.putPrice - (S - K*Math.exp(-r*T));
+  document.getElementById('parityDiv').textContent =
+    `Put-Call Parity Check: C − P − (S − Ke^{−rT}) = ${parity.toFixed(8)} (should be ≈ 0)`;
+
+  drawChart(S, K, T, r, sigma);
+}
+
+function drawChart(S, K, T, r, sigma) {
+  const canvas = document.getElementById('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.clientWidth - 32;
+  canvas.width = W * dpr;
+  canvas.height = 280 * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = '280px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const pad = { top: 15, right: 20, bottom: 30, left: 55 };
+  const cw = W - pad.left - pad.right;
+  const ch = 280 - pad.top - pad.bottom;
+
+  ctx.fillStyle = '#030712';
+  ctx.fillRect(0, 0, W, 280);
+
+  const Smin = S * 0.5, Smax = S * 1.5;
+  const steps = 200;
+  const xs = Array.from({length: steps+1}, (_, i) => Smin + (Smax-Smin)*i/steps);
+
+  const calls = xs.map(s => (bs(s, K, T, r, sigma)||{}).callPrice || 0);
+  const puts  = xs.map(s => (bs(s, K, T, r, sigma)||{}).putPrice  || 0);
+  const intrC = xs.map(s => Math.max(s-K, 0));
+  const intrP = xs.map(s => Math.max(K-s, 0));
+
+  const maxY = Math.max(...calls, ...puts, ...intrC, ...intrP, 1);
+  const minY = 0;
+
+  const xScale = s => pad.left + ((s - Smin) / (Smax - Smin)) * cw;
+  const yScale = v => pad.top + ch - ((v - minY) / (maxY - minY)) * ch;
+
+  // Grid
+  ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 5; i++) {
+    const y = pad.top + (i/5)*ch;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left+cw, y); ctx.stroke();
+    const v = maxY - (i/5)*maxY;
+    ctx.fillStyle='#6b7280'; ctx.font='10px monospace'; ctx.textAlign='right';
+    ctx.fillText('$'+v.toFixed(1), pad.left-4, y+4);
+  }
+  for (let i = 0; i <= 5; i++) {
+    const x = pad.left + (i/5)*cw;
+    ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top+ch); ctx.stroke();
+    const s = Smin + (i/5)*(Smax-Smin);
+    ctx.fillStyle='#6b7280'; ctx.font='10px monospace'; ctx.textAlign='center';
+    ctx.fillText('$'+s.toFixed(0), x, pad.top+ch+18);
+  }
+
+  // Current S line
+  ctx.strokeStyle='#374151'; ctx.setLineDash([4,4]); ctx.lineWidth=1;
+  const xS = xScale(S);
+  ctx.beginPath(); ctx.moveTo(xS, pad.top); ctx.lineTo(xS, pad.top+ch); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#9ca3af'; ctx.font='10px monospace'; ctx.textAlign='center';
+  ctx.fillText('S='+S, xS, pad.top+8);
+
+  // K line
+  ctx.strokeStyle='#4b5563'; ctx.setLineDash([2,4]); ctx.lineWidth=1;
+  const xK = xScale(K);
+  ctx.beginPath(); ctx.moveTo(xK, pad.top); ctx.lineTo(xK, pad.top+ch); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#6b7280'; ctx.font='10px monospace'; ctx.textAlign='center';
+  ctx.fillText('K='+K, xK, pad.top+ch+28);
+
+  // Intrinsic (dashed)
+  function drawLine(data, color, dash=[]) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.setLineDash(dash);
+    ctx.beginPath();
+    data.forEach((v, i) => {
+      const x = xScale(xs[i]), y = yScale(v);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  drawLine(intrC, '#4b5563', [4,4]);
+  drawLine(intrP, '#4b5563', [4,4]);
+  drawLine(calls, '#34d399'); // emerald
+  drawLine(puts,  '#f43f5e'); // rose
+}
+
+['S','K','T','r','sigma'].forEach(id => document.getElementById(id).addEventListener('input', update));
+update();
+window.addEventListener('resize', update);
+</script>
+</body>
+</html>

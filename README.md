@@ -1,0 +1,1 @@
+Black-Scholes Options Pricer with Greeks — computes European call/put prices and all five Greeks (Delta, Gamma, Vega, Theta, Rho) using a full CDF implementation, with a Canvas chart of spot price vs option value.
